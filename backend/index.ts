@@ -8,23 +8,28 @@ import crypto from "crypto";
 import cors from "cors";
 import * as redis from "redis";
 import path from "path";
+import FormData from 'form-data'; 
+import axios from "axios";
+import dotenv from 'dotenv';
+dotenv.config();
 
 interface ImageOperation {
   type:
-    | "resize"
-    | "blur"
-    | "sharpen"
-    | "rotate"
-    | "composite"
-    | "grayscale"
-    | "tint"
-    | "negate"
-    | "convolve"
-    | "median"
-    | "clahe"
-    | "recomb"
-    | "boolean"
-    | "glow";
+  | "sharpen"
+  | "composite"
+  | "tint"
+  | "negate"
+  | "convolve"
+  | "median"
+  | "recomb"
+  | "fractal_noise"
+  | "chromatic_aberration"
+  | "oil_painting"
+  | "holographic"
+  | "edge_enhance_extreme"
+  | "vortex"
+  | "plasma"
+  | "aurora"
 
   width?: number;
   height?: number;
@@ -63,9 +68,8 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 const redisClient = redis.createClient({
-  url: `redis://${
-    process.env.NODE_ENV === "production" ? "redis" : "127.0.0.1"
-  }:6379/0`,
+  url: `redis://${process.env.NODE_ENV === "production" ? "redis" : "127.0.0.1"
+    }:6379/0`,
 });
 
 redisClient.on("error", (err: Error) => console.log("Redis Client Error", err));
@@ -138,6 +142,26 @@ app.post(
     const uniqueFilename = req.file.filename;
 
     try {
+            const form = new FormData();
+      form.append('image', fs.createReadStream(req.file.path));
+
+      const imaggaResponse = await axios.post(
+        'https://api.imagga.com/v2/tags',
+        form,
+        {
+          headers: {
+            ...form.getHeaders(),
+            // Create Basic Auth header from your API keys
+            'Authorization': 'Basic ' + Buffer.from(`${process.env.IMAGGA_API_KEY}:${process.env.IMAGGA_API_SECRET}`).toString('base64'),
+          },
+        }
+      );
+
+      // Extract the top 5 tags with confidence over 20
+      const tags = imaggaResponse.data.result.tags
+        .filter((tag: { confidence: number }) => tag.confidence > 20)
+        .slice(0, 5)
+        .map((tag: { tag: { en: string } }) => tag.tag.en);
       const imageId = `image:${uniqueFilename}`;
       await redisClient.hSet(imageId, {
         user,
@@ -145,6 +169,7 @@ app.post(
         unique_filename: uniqueFilename,
         status: "uploaded",
         processed_versions: JSON.stringify([]),
+        tags: JSON.stringify(tags),
       });
 
       res.status(201).json({
@@ -207,31 +232,17 @@ app.post(
 
         for (const op of operations) {
           switch (op.type) {
-            case "resize":
-              image = image.resize({
-                width: op.width || 800,
-                height: op.height || 800,
-                fit: "cover",
-                kernel: sharp.kernel.lanczos3,
-              });
-              break;
-            case "blur":
-              image = image.blur(op.sigma || 10);
-              break;
+
             case "sharpen":
               image = image.sharpen({ sigma: op.sigma || 2 });
               break;
-            case "rotate":
-              image = image.rotate(op.angle || 90);
-              break;
+
             case "composite":
               image = image.composite([
                 { input: "watermark.png", gravity: "southeast" },
               ]);
               break;
-            case "grayscale":
-              image = image.grayscale();
-              break;
+
             case "tint":
               image = image.tint({ r: 255, g: 240, b: 150 }); //  Sepia-like tint
               break;
@@ -248,10 +259,6 @@ app.post(
             case "median":
               image = image.median(10);
               break;
-
-            case "clahe":
-              image = image.clahe({ width: 200, height: 200 });
-              break;
             case "recomb":
               image = image.recomb([
                 [0.2126, 0.7152, 0.0722],
@@ -259,25 +266,244 @@ app.post(
                 [0.2126, 0.7152, 0.0722],
               ]);
               break;
-                case "glow":
-  
-      image = image.convolve({
-        width: 7,
-        height: 7,
-        kernel: [
-          1, 1, 1, 1, 1, 1, 1,
-          1, 1, 1, 1, 1, 1, 1,
-          1, 1, 1, 1, 1, 1, 1,
-          1, 1, 1, 1, 1, 1, 1,
-          1, 1, 1, 1, 1, 1, 1,
-          1, 1, 1, 1, 1, 1, 1,
-          1, 1, 1, 1, 1, 1, 1,
-        ],
-        scale: 49, 
-      });
-      break;
 
-           
+            case "fractal_noise":
+              // Creates a fractal noise overlay - very computationally expensive
+              const { width: imgWidth, height: imgHeight } = await image.metadata();
+              const noiseWidth = imgWidth || 800;
+              const noiseHeight = imgHeight || 800;
+              const noiseBuffer = Buffer.alloc(noiseWidth * noiseHeight * 3);
+              for (let y = 0; y < noiseHeight; y++) {
+                for (let x = 0; x < noiseWidth; x++) {
+                  const idx = (y * noiseWidth + x) * 3;
+                  const noise1 = Math.sin(x * 0.02) * Math.sin(y * 0.02);
+                  const noise2 = Math.sin(x * 0.04) * Math.sin(y * 0.03);
+                  const noise3 = Math.sin(x * 0.01) * Math.sin(y * 0.015);
+                  const finalNoise = (noise1 + noise2 * 0.5 + noise3 * 0.25) * 127 + 128;
+
+                  noiseBuffer[idx] = Math.max(0, Math.min(255, finalNoise));
+                  noiseBuffer[idx + 1] = Math.max(0, Math.min(255, finalNoise * 0.8));
+                  noiseBuffer[idx + 2] = Math.max(0, Math.min(255, finalNoise * 0.6));
+                }
+              }
+
+              const noiseImage = await sharp(noiseBuffer, {
+                raw: { width: noiseWidth, height: noiseHeight, channels: 3 }
+              }).png().toBuffer();
+
+              image = image.composite([{ input: noiseImage, blend: 'overlay' }]);
+              break;
+
+            case "chromatic_aberration":
+              // Simulates lens chromatic aberration - very cool effect
+              const metadata = await image.metadata();
+              const originalBuffer = await image.toBuffer();
+
+              // Create red, green, blue channel shifts
+              const redShift = sharp(originalBuffer)
+                .extractChannel('red')
+                .resize(metadata.width! + 4, metadata.height! + 4)
+                .extract({ left: 2, top: 2, width: metadata.width!, height: metadata.height! });
+
+              const greenChannel = sharp(originalBuffer).extractChannel('green');
+
+              const blueShift = sharp(originalBuffer)
+                .extractChannel('blue')
+                .resize(metadata.width! - 4, metadata.height! - 4)
+                .resize(metadata.width!, metadata.height!);
+
+              // Recombine with shifts
+              image = sharp({
+                create: {
+                  width: metadata.width!,
+                  height: metadata.height!,
+                  channels: 3,
+                  background: { r: 0, g: 0, b: 0 }
+                }
+              }).composite([
+                { input: await redShift.toBuffer(), blend: 'lighten' },
+                { input: await greenChannel.toBuffer(), blend: 'lighten' },
+                { input: await blueShift.toBuffer(), blend: 'lighten' }
+              ]);
+              break;
+
+            case "oil_painting":
+              // Oil painting effect using multiple convolutions 
+              const oilKernel1 = [
+                1, 1, 1, 1, 1,
+                1, 2, 2, 2, 1,
+                1, 2, 4, 2, 1,
+                1, 2, 2, 2, 1,
+                1, 1, 1, 1, 1
+              ];
+
+              image = image
+                .convolve({ width: 5, height: 5, kernel: oilKernel1, scale: 36 })
+                .median(3)
+                .sharpen({ sigma: 2, m1: 2, m2: 3 })
+                .modulate({ saturation: 1.3, lightness: 1.1 });
+              break;
+
+            case "holographic":
+              // Creates a holographic rainbow effect
+              const holoMetadata = await image.metadata();
+              const holoWidth = holoMetadata.width || 800;
+              const holoHeight = holoMetadata.height || 800;
+              const holoBuffer = Buffer.alloc(holoWidth * holoHeight * 3);
+
+              for (let y = 0; y < holoHeight; y++) {
+                for (let x = 0; x < holoWidth; x++) {
+                  const idx = (y * holoWidth + x) * 3;
+                  const wave = Math.sin((x + y) * 0.1) * 0.5 + 0.5;
+                  holoBuffer[idx] = Math.max(0, Math.min(255, Math.sin(wave * Math.PI * 2) * 127 + 128));     // R
+                  holoBuffer[idx + 1] = Math.max(0, Math.min(255, Math.sin(wave * Math.PI * 2 + 2.09) * 127 + 128)); // G
+                  holoBuffer[idx + 2] = Math.max(0, Math.min(255, Math.sin(wave * Math.PI * 2 + 4.19) * 127 + 128)); // B
+                }
+              }
+
+              // Convert raw buffer to PNG buffer before compositing
+              const holoOverlay = await sharp(holoBuffer, {
+                raw: { width: holoWidth, height: holoHeight, channels: 3 }
+              }).png().toBuffer();
+
+              image = image.composite([{ input: holoOverlay, blend: 'screen' }]);
+              break;
+
+            case "edge_enhance_extreme":
+              // Extreme edge enhancement with multiple passes
+              const edgeKernel1 = [-1, -1, -1, -1, -1, -1, -1,
+              -1, -2, -2, -2, -2, -2, -1,
+              -1, -2, -3, -3, -3, -2, -1,
+              -1, -2, -3, 24, -3, -2, -1,
+              -1, -2, -3, -3, -3, -2, -1,
+              -1, -2, -2, -2, -2, -2, -1,
+              -1, -1, -1, -1, -1, -1, -1];
+
+              const edgeKernel2 = [-1, -1, -1,
+              -1, 8, -1,
+              -1, -1, -1];
+
+              image = image
+                .convolve({ width: 7, height: 7, kernel: edgeKernel1 })
+                .normalize()
+                .convolve({ width: 3, height: 3, kernel: edgeKernel2 })
+                .linear(1.8, 10)
+                .gamma(1.2)
+                .sharpen({ sigma: 3, m1: 2, m2: 3 });
+              break;
+
+            case "vortex":
+              // Creates a swirl/vortex effect by manipulating pixel coordinates
+              const vortexMeta = await image.metadata();
+              const vortexWidth = vortexMeta.width || 800;
+              const vortexHeight = vortexMeta.height || 800;
+              const centerX = vortexWidth / 2;
+              const centerY = vortexHeight / 2;
+              const maxRadius = Math.min(centerX, centerY);
+
+              // This is computationally expensive - we'll simulate with multiple rotations
+              const segments = 8;
+              let composites = [];
+
+              for (let i = 0; i < segments; i++) {
+                const angle = (360 / segments) * i;
+                const radius = (maxRadius / segments) * (i + 1);
+
+                const segment = sharp(await image.clone().toBuffer())
+                  .resize(Math.floor(vortexWidth * (1 - i * 0.1)),
+                    Math.floor(vortexHeight * (1 - i * 0.1)))
+                  .rotate(angle * (i + 1))
+                  .resize(vortexWidth, vortexHeight);
+
+                composites.push({
+                  input: await segment.toBuffer(),
+                  blend: (i === 0 ? 'over' : 'multiply') as sharp.Blend,
+                  opacity: 1 / (i + 1)
+                });
+              }
+
+              image = sharp({
+                create: { width: vortexWidth, height: vortexHeight, channels: 3, background: 'black' }
+              }).composite(composites);
+              break;
+
+
+
+
+            case "plasma":
+              // Generates plasma-like effect
+              const plasmaMeta = await image.metadata();
+              const plasmaWidth = plasmaMeta.width || 800;
+              const plasmaHeight = plasmaMeta.height || 800;
+              const plasmaBuffer = Buffer.alloc(plasmaWidth * plasmaHeight * 3);
+
+              for (let y = 0; y < plasmaHeight; y++) {
+                for (let x = 0; x < plasmaWidth; x++) {
+                  const idx = (y * plasmaWidth + x) * 3;
+
+                  const plasma = Math.sin(x * 0.04) +
+                    Math.sin(y * 0.03) +
+                    Math.sin((x + y) * 0.02) +
+                    Math.sin(Math.sqrt(x * x + y * y) * 0.02);
+
+                  plasmaBuffer[idx] = Math.max(0, Math.min(255, (Math.sin(plasma) + 1) * 127.5));     // R
+                  plasmaBuffer[idx + 1] = Math.max(0, Math.min(255, (Math.sin(plasma + 2) + 1) * 127.5)); // G
+                  plasmaBuffer[idx + 2] = Math.max(0, Math.min(255, (Math.sin(plasma + 4) + 1) * 127.5)); // B
+                }
+              }
+
+              const plasmaImage = await sharp(plasmaBuffer, {
+                raw: { width: plasmaWidth, height: plasmaHeight, channels: 3 }
+              }).png().toBuffer();
+
+              image = image.composite([{ input: plasmaImage, blend: 'multiply' }]);
+              break;
+            case "aurora":
+              const auroraMeta = await image.metadata();
+              const auroraWidth = auroraMeta.width || 800;
+              const auroraHeight = auroraMeta.height || 600;
+              const auroraBuffer = Buffer.alloc(auroraWidth * auroraHeight * 4); // RGBA for transparency
+
+              for (let y = 0; y < auroraHeight; y++) {
+                for (let x = 0; x < auroraWidth; x++) {
+                  const idx = (y * auroraWidth + x) * 4;
+                  let alpha = 0;
+
+                  const noise1 = Math.sin(y * 0.01 + x * 0.005 + Date.now() * 0.0001) * 0.5 + 0.5;
+                  const noise2 = Math.sin(y * 0.015 - x * 0.003 + Date.now() * 0.00015) * 0.5 + 0.5;
+                  const noise3 = Math.sin(y * 0.008 + x * 0.007 + Date.now() * 0.0002) * 0.5 + 0.5;
+
+                  const band1 = Math.pow(Math.abs(Math.sin(y * 0.02 + Date.now() * 0.00005) * 5), 5) * 300;
+                  const band2 = Math.pow(Math.abs(Math.sin((y + 50) * 0.025 + Date.now() * 0.00007) * 5), 5) * 300;
+                  const band3 = Math.pow(Math.abs(Math.sin((y + 100) * 0.018 + Date.now() * 0.00009) * 5), 5) * 300;
+
+                  const intensity = (band1 + band2 * 0.8 + band3 * 0.6) / (auroraHeight * 3); // Normalize
+
+                  if (intensity > 0.008) {
+                    alpha = Math.min(0.6, intensity * 5); // Adjusted alpha for more transparency
+
+                    const r = Math.max(0, Math.min(255, (0.8 * noise1 + 0.2) * 255)); // Orange/Pink
+                    const g = Math.max(0, Math.min(255, (0.3 * noise2) * 255)); // Subtle Green/Yellow
+                    const b = Math.max(0, Math.min(255, (0.5 * noise3 + 0.5) * 255)); // Purple/Blue
+
+                    auroraBuffer.writeUInt8(r, idx);
+                    auroraBuffer.writeUInt8(g, idx + 1);
+                    auroraBuffer.writeUInt8(b, idx + 2);
+                    auroraBuffer.writeUInt8(Math.floor(alpha * 255), idx + 3);
+                  } else {
+                    auroraBuffer.writeUInt32BE(0, idx); // Fully transparent if intensity is low
+                  }
+                }
+              }
+
+              const auroraImage = await sharp(auroraBuffer, {
+                raw: { width: auroraWidth, height: auroraHeight, channels: 4 },
+              }).png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer();
+
+              image = image.composite([{ input: auroraImage, blend: 'soft-light' }]);
+              break;
+
+
           }
         }
 

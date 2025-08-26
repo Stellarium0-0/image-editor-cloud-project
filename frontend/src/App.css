@@ -256,20 +256,58 @@
   margin-top: auto;
   padding-top: 15px;
   border-top: 1px solid #374151;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr); /* 3 columns for a cleaner look */
+  display: flex; /* Use flexbox for alignment */
   gap: 10px;
+  margin-bottom: 10px; /* Add space before the download button */
 }
 
-.image-actions button {
+/* --- ADD THESE NEW STYLES --- */
+.effect-dropdown {
+  flex-grow: 1; /* Allow dropdown to take available space */
+  background-color: #1f2937;
+  border: 1px solid #4b5563;
+  color: #f9fafb;
   padding: 10px 12px;
   border-radius: 6px;
   font-size: 0.9rem;
+  font-family: 'Inter', sans-serif;
+}
+
+.apply-btn {
+  background-color: #374151;
+  border: 1px solid #4b5563;
+  color: #e5e7eb;
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-size: 0.9rem;
   font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.apply-btn:hover {
+  background-color: #4b5563;
+}
+
+/* --- MODIFY THIS STYLE --- */
+.download-btn {
+  /* This button is now outside .image-actions, so it needs its own styles */
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 600;
   text-decoration: none;
   text-align: center;
   cursor: pointer;
-  transition: background-color 0.2s, border-color 0.2s, color 0.2s;
+  background-color: #f9fafb;
+  border: 1px solid #f9fafb;
+  color: #111827;
+  transition: background-color 0.2s;
+}
+
+.download-btn:hover {
+  background-color: #e5e7eb;
 }
 
 /* Button Variants */
@@ -318,4 +356,20 @@
   background-color: #ef4444; 
   color: #ffffff;
   border-color: #ef4444;
+}
+
+.tag-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 15px;
+}
+
+.tag-badge {
+  background-color: #374151;
+  color: #d1d5db;
+  padding: 4px 10px;
+  border-radius: 9999px; /* Pill shape */
+  font-size: 0.8rem;
+  font-weight: 500;
 }
