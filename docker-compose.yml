@@ -1,0 +1,13 @@
+services:
+  redis:
+    container_name: redis
+    image: redis:latest
+    ports:
+      - "6379:6379"
+  backend:
+    build: .
+    image: 901444280953.dkr.ecr.ap-southeast-2.amazonaws.com/existential-calculator-repo:latest
+    ports:
+      - "80:3001"
+    depends_on:
+      - redis
